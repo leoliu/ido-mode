@@ -4785,5 +4785,4 @@ DEF, if non-nil, is the default value."
 
 (provide 'ido)
 
-;; arch-tag: b63a3500-1735-41bd-8a01-05373f0864da
 ;;; ido.el ends here
