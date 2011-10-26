@@ -3459,8 +3459,6 @@ This is to make them appear as if they were \"virtual buffers\"."
       (nconc ido-temp-list items)
     (setq ido-temp-list items)))
 
-(declare-function tramp-tramp-file-p "tramp" (name))
-
 (defun ido-file-name-all-completions-1 (dir)
   (cond
    ((ido-nonreadable-directory-p dir) '())
@@ -3468,8 +3466,6 @@ This is to make them appear as if they were \"virtual buffers\"."
    ;; Caller must have done that if necessary.
 
    ((and ido-enable-tramp-completion
-	 (or (fboundp 'tramp-completion-mode-p)
-	     (require 'tramp nil t))
 	 (string-match "\\`/[^/]+[:@]\\'" dir))
     ;; Strip method:user@host: part of tramp completions.
     ;; Tramp completions do not include leading slash.
@@ -3482,7 +3478,9 @@ This is to make them appear as if they were \"virtual buffers\"."
 		;; /ftp:user@host:./ => ok
 		(and
 		 (not (string= "/ftp:" dir))
-		 (tramp-tramp-file-p dir)
+		 (file-remote-p dir)
+		 ;; tramp-ftp-file-name-p is available only when tramp
+		 ;; has been loaded.
 		 (fboundp 'tramp-ftp-file-name-p)
 		 (funcall 'tramp-ftp-file-name-p dir)
 		 (string-match ":\\'" dir)
