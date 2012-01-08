@@ -1063,11 +1063,11 @@ Only used if `ido-use-virtual-buffers' is non-nil.")
 ;; Stores the current list of items that will be searched through.
 ;; The list is ordered, so that the most interesting item comes first,
 ;; although by default, the files visible in the current frame are put
-;; at the end of the list.
-(defvar ido-cur-list nil)
+;; at the end of the list.  Created by `ido-make-item-list'.
+(defvar ido-cur-list)
 
 ;; Stores the choice list for ido-completing-read
-(defvar ido-choice-list nil)
+(defvar ido-choice-list)
 
 ;; Stores the list of items which are ignored when building
 ;; `ido-cur-list'.  It is in no specific order.
@@ -2181,9 +2181,7 @@ If cursor is not at the end of the user input, move to end of input."
 	   (ido-current-directory nil)
 	   (ido-directory-nonreadable nil)
 	   (ido-directory-too-big nil)
-	   (ido-use-virtual-buffers (if (eq method 'kill)
-					nil    ;; Don't consider virtual buffers for killing
-				      ido-use-virtual-buffers))
+	   (ido-use-virtual-buffers ido-use-virtual-buffers)
 	   (require-match (confirm-nonexistent-file-or-buffer))
 	   (buf (ido-read-internal 'buffer (or prompt "Buffer: ") 'ido-buffer-history default
 				   require-match initial))
@@ -3400,9 +3398,9 @@ for first matching file."
     (if ido-temp-list
 	(nconc ido-temp-list ido-current-buffers)
       (setq ido-temp-list ido-current-buffers))
-    (when (and default (buffer-live-p (get-buffer default)))
-      (setq ido-temp-list
-	    (cons default (delete default ido-temp-list))))
+    (if default
+        (setq ido-temp-list
+              (cons default (delete default ido-temp-list))))
     (if ido-use-virtual-buffers
 	(ido-add-virtual-buffers-to-list))
     (run-hooks 'ido-make-buffer-list-hook)
@@ -3670,7 +3668,6 @@ This is to make them appear as if they were \"virtual buffers\"."
   ;; Used by `ido-get-buffers-in-frames' to walk through all windows
   (let ((buf (buffer-name (window-buffer win))))
 	(unless (or (member buf ido-bufs-in-frame)
-		    (minibufferp buf)
 		    (member buf ido-ignore-item-temp-list))
 	  ;; Only add buf if it is not already in list.
 	  ;; This prevents same buf in two different windows being
@@ -3911,27 +3908,6 @@ This is to make them appear as if they were \"virtual buffers\"."
 	      ;;(add-hook 'completion-setup-hook 'completion-setup-function)
 	      (display-completion-list completion-list)))))))
 
-(defun ido-kill-buffer-internal (buf)
-  "Kill buffer BUF and rebuild ido's buffer list if needed."
-  (if (not (kill-buffer buf))
-      ;; buffer couldn't be killed.
-      (setq ido-rescan t)
-    ;; else buffer was killed so remove name from list.
-    (setq ido-cur-list (delq buf ido-cur-list))
-    ;; Some packages, like uniquify.el, may rename buffers when one
-    ;; is killed, so we need to test this condition to avoid using
-    ;; an outdated list of buffer names. We don't want to always
-    ;; rebuild the list of buffers, as this alters the previous
-    ;; buffer order that the user was seeing on the prompt. However,
-    ;; when we rebuild the list, we try to keep the previous second
-    ;; buffer as the first one.
-    (catch 'update
-      (dolist (b ido-cur-list)
-	(unless (get-buffer b)
-	  (setq ido-cur-list (ido-make-buffer-list (cadr ido-matches)))
-	  (setq ido-rescan t)
-	  (throw 'update nil))))))
-
 ;;; KILL CURRENT BUFFER
 (defun ido-kill-buffer-at-head ()
   "Kill the buffer at the head of `ido-matches'.
@@ -3940,15 +3916,32 @@ If cursor is not at the end of the user input, delete to end of input."
   (if (not (eobp))
       (delete-region (point) (line-end-position))
     (let ((enable-recursive-minibuffers t)
-	  (buf (ido-name (car ido-matches))))
-      (when buf
-	(ido-kill-buffer-internal buf)
-	;; Check if buffer still exists.
-	(if (get-buffer buf)
-	    ;; buffer couldn't be killed.
+	  (buf (ido-name (car ido-matches)))
+	  (nextbuf (cadr ido-matches)))
+      (cond
+       ((get-buffer buf)
+	;; If next match names a buffer use the buffer object; buffer
+	;; name may be changed by packages such as uniquify.
+	(when (and nextbuf (get-buffer nextbuf))
+	  (setq nextbuf (get-buffer nextbuf)))
+	(if (null (kill-buffer buf))
+	    ;; Buffer couldn't be killed.
 	    (setq ido-rescan t)
-	  ;; else buffer was killed so remove name from list.
-	  (setq ido-cur-list (delq buf ido-cur-list)))))))
+	  ;; Else `kill-buffer' succeeds so re-make the buffer list
+	  ;; taking into account packages like uniquify may rename
+	  ;; buffers.
+	  (if (bufferp nextbuf)
+	      (setq nextbuf (buffer-name nextbuf)))
+	  (setq ido-default-item nextbuf
+		ido-text-init ido-text
+		ido-exit 'refresh)
+	  (exit-minibuffer)))
+       ;; Handle virtual buffers
+       ((assoc buf ido-virtual-buffers)
+	(setq recentf-list
+	      (delete (cdr (assoc buf ido-virtual-buffers)) recentf-list))
+	(setq ido-cur-list (delete buf ido-cur-list))
+	(setq ido-rescan t))))))
 
 ;;; DELETE CURRENT FILE
 (defun ido-delete-file-at-head ()
@@ -3986,7 +3979,7 @@ Record command in `command-history' if optional RECORD is non-nil."
      ((eq method 'kill)
       (if record
 	  (ido-record-command 'kill-buffer buffer))
-      (ido-kill-buffer-internal buffer))
+      (kill-buffer buffer))
 
      ((eq method 'other-window)
       (if record
